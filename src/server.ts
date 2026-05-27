@@ -14,6 +14,14 @@ import {
   type RutrackerProviderDebug
 } from './providers/rutracker/index.js';
 import {
+  buildRutorDownloadUrl,
+  buildRutorSearchUrl,
+  debugSearchRutor,
+  RutorSearchError,
+  searchRutor,
+  type RutorProviderDebug
+} from './providers/rutor/index.js';
+import {
   buildSearchUrl,
   buildTolokaDownloadUrl,
   debugSearchToloka,
@@ -24,14 +32,15 @@ import {
 import { buildCapsXml, buildSearchRssXml } from './xml.js';
 import { fetch } from 'undici';
 
-type ProviderId = 'mock' | 'toloka' | 'rutracker';
+type ProviderId = 'mock' | 'toloka' | 'rutracker' | 'rutor';
 type ProviderSearchers = Record<ProviderId, (query: string) => Promise<TorrentResult[]> | TorrentResult[]>;
 
-const defaultProviders: ProviderId[] = ['toloka', 'rutracker'];
+const defaultProviders: ProviderId[] = ['toloka', 'rutracker', 'rutor'];
 const providerNames: Record<ProviderId, string> = {
   mock: 'Mock Provider',
   toloka: 'Toloka',
-  rutracker: 'RuTracker'
+  rutracker: 'RuTracker',
+  rutor: 'Rutor'
 };
 
 type ProviderSearchResult = {
@@ -44,13 +53,14 @@ type ProviderSearchResult = {
   providerDebug?: {
     toloka?: TolokaProviderDebug;
     rutracker?: RutrackerProviderDebug;
+    rutor?: RutorProviderDebug;
   };
 };
 
 type ProviderSearchTaskResult = {
   provider: ProviderId;
   results: TorrentResult[];
-  debug?: TolokaProviderDebug | RutrackerProviderDebug;
+  debug?: TolokaProviderDebug | RutrackerProviderDebug | RutorProviderDebug;
 };
 
 function parseProviders(value?: string): ProviderId[] {
@@ -61,13 +71,16 @@ function parseProviders(value?: string): ProviderId[] {
   const providers = value
     .split(',')
     .map((provider) => provider.trim().toLowerCase())
-    .filter((provider): provider is ProviderId => provider === 'mock' || provider === 'toloka' || provider === 'rutracker');
+    .filter(
+      (provider): provider is ProviderId =>
+        provider === 'mock' || provider === 'toloka' || provider === 'rutracker' || provider === 'rutor'
+    );
 
   return providers.length > 0 ? providers : defaultProviders;
 }
 
 function resolveProviders(filter: string, providersParam?: string): ProviderId[] {
-  if (filter === 'toloka' || filter === 'mock' || filter === 'rutracker') {
+  if (filter === 'toloka' || filter === 'mock' || filter === 'rutracker' || filter === 'rutor') {
     return [filter];
   }
 
@@ -194,6 +207,15 @@ async function searchProviders(
       };
     }
 
+    if (options.debug && provider === 'rutor') {
+      const rutor = await debugSearchRutor(query);
+      return {
+        provider,
+        results: rutor.results,
+        debug: rutor.debug
+      };
+    }
+
     if (provider === 'toloka') {
       return {
         provider,
@@ -205,6 +227,13 @@ async function searchProviders(
       return {
         provider,
         results: await providerSearchers.rutracker(query)
+      };
+    }
+
+    if (provider === 'rutor') {
+      return {
+        provider,
+        results: await providerSearchers.rutor(query)
       };
     }
 
@@ -229,6 +258,9 @@ async function searchProviders(
       }
       if (settledResult.value.debug && settledResult.value.provider === 'rutracker') {
         providerDebug.rutracker = settledResult.value.debug;
+      }
+      if (settledResult.value.debug && settledResult.value.provider === 'rutor') {
+        providerDebug.rutor = settledResult.value.debug;
       }
       return;
     }
@@ -259,6 +291,13 @@ async function searchProviders(
         providerDebug.rutracker = {
           searchUrl: buildRutrackerSearchUrl(query),
           parserStrategy: 'rutracker.tr.a.tLink-data-topic-id.v1'
+        };
+      } else if (options.debug && provider === 'rutor' && settledResult.reason instanceof RutorSearchError) {
+        providerDebug.rutor = settledResult.reason.debug;
+      } else if (options.debug && provider === 'rutor') {
+        providerDebug.rutor = {
+          searchUrl: buildRutorSearchUrl(query),
+          parserStrategy: 'rutor.index-table.tr-gai-tum.v1'
         };
       }
     })
@@ -292,6 +331,7 @@ export async function buildServer(options: { providerSearchers?: Partial<Provide
     mock: searchMockTorrents,
     toloka: searchToloka,
     rutracker: searchRutracker,
+    rutor: searchRutor,
     ...options.providerSearchers
   };
 
@@ -460,6 +500,58 @@ export async function buildServer(options: { providerSearchers?: Partial<Provide
     reply
       .header('content-type', 'application/x-bittorrent')
       .header('content-disposition', `attachment; filename="rutracker-${params.id}.torrent"`)
+      .header('cache-control', 'no-store');
+
+    return buffer;
+  });
+
+  app.get('/download/rutor/:id.torrent', async (request, reply) => {
+    const params = request.params as {
+      id: string;
+    };
+    const query = request.query as {
+      apikey?: string;
+    };
+
+    if (config.apiKey && query.apikey !== config.apiKey) {
+      reply.code(401);
+      return {
+        error: 'Invalid API key'
+      };
+    }
+
+    const response = await fetch(buildRutorDownloadUrl(params.id), {
+      headers: {
+        accept: 'application/x-bittorrent,application/octet-stream,*/*',
+        'user-agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+      }
+    });
+    const contentType = response.headers.get('content-type') ?? '';
+    const buffer = Buffer.from(await response.arrayBuffer());
+    const looksLikeHtml =
+      contentType.toLowerCase().includes('text/html') ||
+      buffer.subarray(0, 256).toString('utf8').toLowerCase().includes('<html');
+
+    if (!response.ok || looksLikeHtml) {
+      request.log.error(
+        {
+          provider: 'rutor',
+          statusCode: response.status,
+          contentType,
+          downloadId: params.id
+        },
+        'Rutor torrent proxy failed'
+      );
+      reply.code(502);
+      return {
+        error: 'Rutor returned HTML page or torrent download failed'
+      };
+    }
+
+    reply
+      .header('content-type', 'application/x-bittorrent')
+      .header('content-disposition', `attachment; filename="rutor-${params.id}.torrent"`)
       .header('cache-control', 'no-store');
 
     return buffer;

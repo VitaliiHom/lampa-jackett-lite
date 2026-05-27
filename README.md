@@ -6,18 +6,20 @@ Providers:
 
 - Toloka
 - RuTracker
+- Rutor
 - Mock, only when explicitly requested
 
 ## Endpoints
 
 - `GET /health`
 - `GET /`
-- `GET /debug/search?q=avatar&providers=toloka,rutracker&debug=1`
+- `GET /debug/search?q=avatar&providers=toloka,rutracker,rutor&debug=1`
 - `GET /api/v2.0/indexers/status:healthy/results?Query=avatar`
 - `GET /api/v2.0/indexers/all/results/torznab/api?t=caps`
 - `GET /api/v2.0/indexers/all/results/torznab/api?t=search&q=avatar`
 - `GET /download/toloka/:id.torrent`
 - `GET /download/rutracker/:id.torrent`
+- `GET /download/rutor/:id.torrent`
 
 ## Requirements
 
@@ -49,7 +51,7 @@ HOST=127.0.0.1 PORT=9120 npm run dev
 ```bash
 curl http://127.0.0.1:9118/health
 curl http://127.0.0.1:9118/
-curl -G http://127.0.0.1:9118/debug/search --data-urlencode 'q=аватар' --data-urlencode 'providers=toloka,rutracker' --data-urlencode 'debug=1'
+curl -G http://127.0.0.1:9118/debug/search --data-urlencode 'q=аватар' --data-urlencode 'providers=toloka,rutracker,rutor' --data-urlencode 'debug=1'
 curl -G http://127.0.0.1:9118/api/v2.0/indexers/status:healthy/results --data-urlencode 'apikey=test' --data-urlencode 'Query=аватар'
 curl 'http://127.0.0.1:9118/api/v2.0/indexers/all/results/torznab/api?t=caps'
 curl -G http://127.0.0.1:9118/api/v2.0/indexers/all/results/torznab/api --data-urlencode 't=search' --data-urlencode 'q=аватар'

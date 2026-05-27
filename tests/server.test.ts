@@ -55,6 +55,26 @@ const rutrackerResults: TorrentResult[] = [
   }
 ];
 
+const rutorResults: TorrentResult[] = [
+  {
+    providerId: 'rutor',
+    providerName: 'Rutor',
+    title: 'Rutor Avatar',
+    guid: 'rutor:https://rutor.info/torrent/2/avatar',
+    detailsUrl: 'https://rutor.info/torrent/2/avatar',
+    downloadUrl: 'http://localhost:9118/download/rutor/2.torrent?apikey=test',
+    downloadId: '2',
+    originalDownloadUrl: 'https://d.rutor.info/download/2',
+    proxiedDownloadUrl: 'http://localhost:9118/download/rutor/2.torrent?apikey=test',
+    magnetUrl: 'magnet:?xt=urn:btih:2222222222222222222222222222222222222222&dn=rutor.info',
+    pubDate: new Date('2026-05-04T12:00:00.000Z'),
+    size: 300,
+    seeders: 5,
+    peers: 6,
+    category: '2000'
+  }
+];
+
 describe('server routes', () => {
   const apps: Awaited<ReturnType<typeof buildServer>>[] = [];
 
@@ -68,6 +88,7 @@ describe('server routes', () => {
       providerSearchers: {
         toloka: () => tolokaResults,
         rutracker: () => rutrackerResults,
+        rutor: () => rutorResults,
         mock: () => mockResults
       }
     });
@@ -81,7 +102,7 @@ describe('server routes', () => {
     const body = JSON.parse(response.body);
 
     expect(response.statusCode).toBe(200);
-    expect(body.Results).toHaveLength(2);
+    expect(body.Results).toHaveLength(3);
     expect(body.Results[0]).toMatchObject({
       Tracker: 'Toloka',
       TrackerId: 'toloka',
@@ -105,6 +126,13 @@ describe('server routes', () => {
       {
         ID: 'rutracker',
         Name: 'RuTracker',
+        Status: 2,
+        Results: 1,
+        Error: null
+      },
+      {
+        ID: 'rutor',
+        Name: 'Rutor',
         Status: 2,
         Results: 1,
         Error: null
@@ -142,6 +170,7 @@ describe('server routes', () => {
           }
         ],
         rutracker: () => [],
+        rutor: () => [],
         mock: () => []
       }
     });
@@ -162,6 +191,20 @@ describe('server routes', () => {
     expect(response.statusCode).toBe(200);
     expect(body.Results[0].TrackerId).toBe('toloka');
     expect(body.Indexers[0].ID).toBe('toloka');
+  });
+
+  it('uses Rutor provider when filter is rutor', async () => {
+    const app = await appWithProviders();
+    const response = await app.inject('/api/v2.0/indexers/rutor/results?apikey=test&Query=avatar&providers=mock');
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(body.Results[0]).toMatchObject({
+      TrackerId: 'rutor',
+      Link: 'http://localhost:9118/download/rutor/2.torrent?apikey=test',
+      MagnetUri: 'magnet:?xt=urn:btih:2222222222222222222222222222222222222222&dn=rutor.info'
+    });
+    expect(body.Indexers[0].ID).toBe('rutor');
   });
 
   it('keeps Torznab endpoint working', async () => {

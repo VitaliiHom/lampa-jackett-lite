@@ -10,7 +10,9 @@ export const config = {
   rutrackerBaseUrl: process.env.RUTRACKER_BASE_URL ?? 'https://rutracker.net/forum',
   rutrackerUsername: process.env.RUTRACKER_USERNAME,
   rutrackerPassword: process.env.RUTRACKER_PASSWORD,
-  rutrackerDebugSaveHtml: process.env.RUTRACKER_DEBUG_SAVE_HTML === 'true'
+  rutrackerDebugSaveHtml: process.env.RUTRACKER_DEBUG_SAVE_HTML === 'true',
+  rutorBaseUrl: process.env.RUTOR_BASE_URL ?? 'https://rutor.info',
+  rutorDebugSaveHtml: process.env.RUTOR_DEBUG_SAVE_HTML === 'true'
 };
 
 export function isTolokaConfigured(): boolean {
