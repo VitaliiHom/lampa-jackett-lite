@@ -130,6 +130,33 @@ function extractCategories(query: Record<string, unknown>): string[] {
   return [...queryValues(query['Category[]']), ...queryValues(query.Category)];
 }
 
+function isTruthyQueryValue(value?: string): boolean {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+}
+
+function isTvCategory(category: string): boolean {
+  const parsed = Number(category);
+  return Number.isFinite(parsed) && parsed >= 5000 && parsed < 6000;
+}
+
+function resolveResultCategory(query: Record<string, unknown>, categories: string[]): string | undefined {
+  const requestedTvCategory = categories.find(isTvCategory);
+  if (requestedTvCategory) {
+    return requestedTvCategory;
+  }
+
+  if (isTruthyQueryValue(firstQueryValue(query.is_serial))) {
+    return '5000';
+  }
+
+  return undefined;
+}
+
 function sanitizeMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -599,6 +626,7 @@ export async function buildServer(options: { providerSearchers?: Partial<Provide
     const searchQuery = pickLampaSearchQuery(query);
     const providers = resolveProviders(params.filter, firstQueryValue(query.providers));
     const categories = extractCategories(query);
+    const resultCategory = resolveResultCategory(query, categories);
 
     reply.header('content-type', 'application/json; charset=utf-8');
 
@@ -647,7 +675,7 @@ export async function buildServer(options: { providerSearchers?: Partial<Provide
     );
 
     return {
-      Results: search.results.map(toJackettJsonResult),
+      Results: search.results.map((result) => toJackettJsonResult(result, { category: resultCategory })),
       Indexers: buildIndexers(providers, search)
     };
   });

@@ -183,6 +183,34 @@ describe('server routes', () => {
     expect(body.Results[0].PublishDate).not.toBe('1970-01-01T00:00:00.000Z');
   });
 
+  it('marks Lampa serial JSON searches as TV category', async () => {
+    const app = await appWithProviders();
+    const response = await app.inject(
+      '/api/v2.0/indexers/rutracker/results?apikey=test&Query=avatar&is_serial=true'
+    );
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(body.Results[0]).toMatchObject({
+      TrackerId: 'rutracker',
+      Category: [5000]
+    });
+  });
+
+  it('preserves requested Lampa TV category on JSON results', async () => {
+    const app = await appWithProviders();
+    const response = await app.inject(
+      '/api/v2.0/indexers/rutracker/results?apikey=test&Query=avatar&Category[]=5030'
+    );
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(body.Results[0]).toMatchObject({
+      TrackerId: 'rutracker',
+      Category: [5030]
+    });
+  });
+
   it('uses Toloka provider when filter is toloka', async () => {
     const app = await appWithProviders();
     const response = await app.inject('/api/v2.0/indexers/toloka/results?apikey=test&Query=avatar&providers=mock');

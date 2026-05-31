@@ -49,14 +49,19 @@ export function validDateOrNow(value?: Date): Date {
   return new Date();
 }
 
-export function toJackettJsonResult(result: TorrentResult): JackettJsonResult {
+export function toJackettJsonResult(
+  result: TorrentResult,
+  options: {
+    category?: string;
+  } = {}
+): JackettJsonResult {
   const link = result.proxiedDownloadUrl ?? result.downloadUrl ?? result.detailsUrl;
   const comments = result.detailsUrl;
 
   return {
     Tracker: result.providerName,
     TrackerId: result.providerId,
-    Category: [parseCategory(result.category)],
+    Category: [parseCategory(options.category ?? result.category)],
     Title: result.title,
     Guid: result.guid || `${result.providerId}:${result.detailsUrl || result.title}`,
     Link: link,
