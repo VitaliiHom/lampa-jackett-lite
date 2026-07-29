@@ -16,6 +16,7 @@ export type TolokaParsedResult = {
 export type TolokaHtmlDiagnostics = {
   pageTitle: string;
   looksLikeLoginPage: boolean;
+  looksLikeGuestPage: boolean;
   resultCandidatesCount: number;
   topicLinksCount: number;
   parserStrategy: string;
@@ -126,6 +127,11 @@ export function inspectTolokaSearchHtml(html: string): TolokaHtmlDiagnostics {
   const passwordInputsCount = $('input[type="password"]').length;
   const topicLinksCount = $('.topictitle a, a.topictitle').length;
   const normalizedTitle = pageTitle.toLowerCase();
+  const bodyText = $('body').text().replace(/\s+/g, ' ').trim();
+  const looksLikeGuestPage =
+    /(?:^|\s)Вхід(?:\s|$)/.test(bodyText) &&
+    /Зареєструватися/.test(bodyText) &&
+    !/(?:^|\s)(?:Вийти|Профіль)(?:\s|$)/.test(bodyText);
 
   return {
     pageTitle,
@@ -133,7 +139,9 @@ export function inspectTolokaSearchHtml(html: string): TolokaHtmlDiagnostics {
       loginFormCount > 0 ||
       passwordInputsCount > 0 ||
       normalizedTitle === 'вхід' ||
-      normalizedTitle === 'login',
+      normalizedTitle === 'login' ||
+      looksLikeGuestPage,
+    looksLikeGuestPage,
     resultCandidatesCount: $('table.forumline tr:has(.topictitle a), table.forumline tr:has(a.topictitle)').length,
     topicLinksCount,
     parserStrategy: 'toloka.forumline.tr.a.topictitle.v1'
