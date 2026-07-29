@@ -211,6 +211,20 @@ describe('server routes', () => {
     });
   });
 
+  it('prefers an explicit movie category over an incorrect is_serial flag', async () => {
+    const app = await appWithProviders();
+    const response = await app.inject(
+      '/api/v2.0/indexers/rutracker/results?apikey=test&Query=avatar&is_serial=1&Category[]=2000'
+    );
+    const body = JSON.parse(response.body);
+
+    expect(response.statusCode).toBe(200);
+    expect(body.Results[0]).toMatchObject({
+      TrackerId: 'rutracker',
+      Category: [2000]
+    });
+  });
+
   it('uses Toloka provider when filter is toloka', async () => {
     const app = await appWithProviders();
     const response = await app.inject('/api/v2.0/indexers/toloka/results?apikey=test&Query=avatar&providers=mock');

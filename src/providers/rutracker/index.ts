@@ -1,8 +1,8 @@
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import iconv from 'iconv-lite';
-import { fetch } from 'undici';
+import { fetch, ProxyAgent, type Dispatcher } from 'undici';
 import { config, isRutrackerConfigured } from '../../config.js';
 import type { TorrentResult } from '../../mockProvider.js';
 import { inspectRutrackerSearchHtml, parseRutrackerSearchHtml } from './parser.js';
@@ -12,6 +12,7 @@ const RUTRACKER_PROVIDER_NAME = 'RuTracker';
 const BROWSER_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const PROJECT_ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
+const SESSION_CACHE_FILE = join(PROJECT_ROOT, '.tmp', 'rutracker-session.json');
 
 export type RutrackerProviderDebug = {
   searchUrl: string;
@@ -30,7 +31,57 @@ type RutrackerFetchResult = {
   debug: RutrackerProviderDebug;
 };
 
-let cachedCookie: string | undefined;
+type RutrackerSession = {
+  cookie: string;
+  userAgent: string;
+  createdAt?: number;
+};
+
+type FlareSolverrResponse = {
+  status?: string;
+  message?: string;
+  solution?: {
+    status?: number;
+    userAgent?: string;
+    cookies?: Array<{
+      name?: string;
+      value?: string;
+    }>;
+  };
+};
+
+let cachedSession: RutrackerSession | undefined;
+let sessionPromise: Promise<RutrackerSession> | undefined;
+const proxyDispatcher: Dispatcher | undefined = config.rutrackerProxyUrl
+  ? new ProxyAgent(config.rutrackerProxyUrl)
+  : undefined;
+
+async function readCachedSession(): Promise<RutrackerSession | undefined> {
+  try {
+    const session = JSON.parse(await readFile(SESSION_CACHE_FILE, 'utf8')) as RutrackerSession;
+    if (!session.cookie || !session.userAgent) {
+      return undefined;
+    }
+    return session;
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeCachedSession(session: RutrackerSession): Promise<void> {
+  await mkdir(dirname(SESSION_CACHE_FILE), { recursive: true });
+  await writeFile(
+    SESSION_CACHE_FILE,
+    JSON.stringify({
+      ...session,
+      createdAt: Date.now()
+    }),
+    {
+      encoding: 'utf8',
+      mode: 0o600
+    }
+  );
+}
 
 export class RutrackerSearchError extends Error {
   constructor(
@@ -73,11 +124,47 @@ async function saveDebugHtml(html: string): Promise<void> {
   await writeFile(filePath, html, 'utf8');
 }
 
-export async function getRutrackerCookie(): Promise<string> {
-  if (cachedCookie) {
-    return cachedCookie;
+async function solveCloudflare(): Promise<RutrackerSession> {
+  if (!config.flaresolverrUrl || !config.rutrackerProxyUrl) {
+    return {
+      cookie: '',
+      userAgent: BROWSER_USER_AGENT
+    };
   }
 
+  const response = await fetch(new URL('/v1', config.flaresolverrUrl), {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({
+      cmd: 'request.get',
+      url: buildRutrackerSearchUrl(''),
+      maxTimeout: 100_000,
+      proxy: {
+        url: config.rutrackerProxyUrl
+      }
+    })
+  });
+  const result = (await response.json()) as FlareSolverrResponse;
+  if (!response.ok || result.status !== 'ok' || !result.solution?.userAgent) {
+    throw new RutrackerSearchError(`FlareSolverr failed: ${result.message ?? `HTTP ${response.status}`}`, {
+      searchUrl: buildRutrackerSearchUrl(''),
+      statusCode: result.solution?.status ?? response.status,
+      parserStrategy: 'rutracker.flaresolverr-warp.v1'
+    });
+  }
+
+  return {
+    cookie: (result.solution.cookies ?? [])
+      .filter((cookie) => cookie.name && cookie.value)
+      .map((cookie) => `${cookie.name}=${cookie.value}`)
+      .join('; '),
+    userAgent: result.solution.userAgent
+  };
+}
+
+async function createRutrackerSession(): Promise<RutrackerSession> {
   if (!isRutrackerConfigured()) {
     throw new RutrackerSearchError('RUTRACKER_USERNAME or RUTRACKER_PASSWORD is not configured', {
       searchUrl: buildRutrackerSearchUrl(''),
@@ -85,6 +172,7 @@ export async function getRutrackerCookie(): Promise<string> {
     });
   }
 
+  const cloudflare = await solveCloudflare();
   const response = await fetch(new URL('login.php', `${config.rutrackerBaseUrl}/`), {
     method: 'POST',
     redirect: 'manual',
@@ -95,13 +183,15 @@ export async function getRutrackerCookie(): Promise<string> {
     }),
     headers: {
       'content-type': 'application/x-www-form-urlencoded',
-      'user-agent': BROWSER_USER_AGENT
-    }
+      cookie: cloudflare.cookie,
+      'user-agent': cloudflare.userAgent
+    },
+    ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {})
   });
   const setCookie = response.headers.getSetCookie?.() ?? [];
-  const cookie = setCookie.map((line) => line.split(';')[0]).filter(Boolean).join('; ');
+  const loginCookie = setCookie.map((line) => line.split(';')[0]).filter(Boolean).join('; ');
 
-  if (!cookie) {
+  if (!loginCookie) {
     throw new RutrackerSearchError(`RuTracker login failed with HTTP ${response.status}`, {
       searchUrl: buildRutrackerSearchUrl(''),
       statusCode: response.status,
@@ -109,18 +199,63 @@ export async function getRutrackerCookie(): Promise<string> {
     });
   }
 
-  cachedCookie = cookie;
-  return cookie;
+  return {
+    cookie: [cloudflare.cookie, loginCookie].filter(Boolean).join('; '),
+    userAgent: cloudflare.userAgent,
+    createdAt: Date.now()
+  };
+}
+
+async function getRutrackerSession(): Promise<RutrackerSession> {
+  if (cachedSession) {
+    return cachedSession;
+  }
+
+  sessionPromise ??= (async () => {
+    const stored = await readCachedSession();
+    if (stored) {
+      return stored;
+    }
+
+    const created = await createRutrackerSession();
+    await writeCachedSession(created);
+    return created;
+  })();
+  try {
+    cachedSession = await sessionPromise;
+    return cachedSession;
+  } finally {
+    sessionPromise = undefined;
+  }
+}
+
+export async function getRutrackerCookie(): Promise<string> {
+  return (await getRutrackerSession()).cookie;
+}
+
+export async function fetchRutrackerAuthenticated(
+  url: string | URL,
+  init: {
+    headers?: Record<string, string>;
+  } = {}
+) {
+  const session = await getRutrackerSession();
+  return fetch(url, {
+    ...init,
+    headers: {
+      ...init.headers,
+      cookie: session.cookie,
+      'user-agent': session.userAgent
+    },
+    ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {})
+  });
 }
 
 async function fetchRutrackerSearchHtml(query: string): Promise<RutrackerFetchResult> {
   const searchUrl = buildRutrackerSearchUrl(query);
-  const cookie = await getRutrackerCookie();
-  const response = await fetch(searchUrl, {
+  const response = await fetchRutrackerAuthenticated(searchUrl, {
     headers: {
-      accept: 'text/html,application/xhtml+xml',
-      cookie,
-      'user-agent': BROWSER_USER_AGENT
+      accept: 'text/html,application/xhtml+xml'
     }
   });
   const contentType = response.headers.get('content-type') ?? undefined;
@@ -143,7 +278,7 @@ async function fetchRutrackerSearchHtml(query: string): Promise<RutrackerFetchRe
   }
 
   if (debug.looksLikeLoginPage) {
-    cachedCookie = undefined;
+    cachedSession = undefined;
     throw new RutrackerSearchError('RuTracker returned a login page or credentials are not authenticated', debug);
   }
 
