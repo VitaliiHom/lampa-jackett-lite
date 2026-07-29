@@ -1,0 +1,16 @@
+[Unit]
+Description=FlareSolverr for Lampa Jackett Lite
+After=network-online.target warp-svc.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=home
+Group=home
+WorkingDirectory=/home/home/projects/lampa-jackett-lite
+ExecStart=/home/home/projects/lampa-jackett-lite/scripts/run-flaresolverr.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
