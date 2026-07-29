@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseTolokaSearchHtml, parseTolokaSize } from './parser.js';
+import { inspectTolokaSearchHtml, parseTolokaSearchHtml, parseTolokaSize } from './parser.js';
 
 const fixture = readFileSync(new URL('./fixtures/search.html', import.meta.url), 'utf8');
 
@@ -31,5 +31,21 @@ describe('Toloka parser', () => {
   it('parses Ukrainian and English size units', () => {
     expect(parseTolokaSize('775 MB')).toBe(812_646_400);
     expect(parseTolokaSize('1,5 ГБ')).toBe(1_610_612_736);
+  });
+
+  it('detects guest search pages as unauthenticated', () => {
+    const diagnostics = inspectTolokaSearchHtml(`
+      <html>
+        <head><title>Пошук</title></head>
+        <body>
+          <a href="/profile.php?mode=register">Зареєструватися</a>
+          <a href="/login.php">Вхід</a>
+          <table class="forumline"></table>
+        </body>
+      </html>
+    `);
+
+    expect(diagnostics.looksLikeGuestPage).toBe(true);
+    expect(diagnostics.looksLikeLoginPage).toBe(true);
   });
 });

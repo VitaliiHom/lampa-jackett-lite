@@ -8,7 +8,7 @@ import {
   buildRutrackerDownloadUrl,
   buildRutrackerSearchUrl,
   debugSearchRutracker,
-  getRutrackerCookie,
+  fetchRutrackerAuthenticated,
   RutrackerSearchError,
   searchRutracker,
   type RutrackerProviderDebug
@@ -139,15 +139,13 @@ function isTruthyQueryValue(value?: string): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes';
 }
 
-function isTvCategory(category: string): boolean {
-  const parsed = Number(category);
-  return Number.isFinite(parsed) && parsed >= 5000 && parsed < 6000;
-}
-
 function resolveResultCategory(query: Record<string, unknown>, categories: string[]): string | undefined {
-  const requestedTvCategory = categories.find(isTvCategory);
-  if (requestedTvCategory) {
-    return requestedTvCategory;
+  const requestedCategory = categories.find((category) => {
+    const parsed = Number(category);
+    return Number.isFinite(parsed) && parsed > 0;
+  });
+  if (requestedCategory) {
+    return requestedCategory;
   }
 
   if (isTruthyQueryValue(firstQueryValue(query.is_serial))) {
@@ -493,13 +491,9 @@ export async function buildServer(options: { providerSearchers?: Partial<Provide
       };
     }
 
-    const cookie = await getRutrackerCookie();
-    const response = await fetch(buildRutrackerDownloadUrl(params.id), {
+    const response = await fetchRutrackerAuthenticated(buildRutrackerDownloadUrl(params.id), {
       headers: {
-        accept: 'application/x-bittorrent,application/octet-stream,*/*',
-        cookie,
-        'user-agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+        accept: 'application/x-bittorrent,application/octet-stream,*/*'
       }
     });
     const contentType = response.headers.get('content-type') ?? '';
