@@ -1,6 +1,6 @@
 import cors from '@fastify/cors';
 import Fastify from 'fastify';
-import { config } from './config.js';
+import { config, isTolokaConfigured } from './config.js';
 import { toJackettJsonResult, validDateOrNow, type JackettJsonIndexer } from './jackettJson.js';
 import type { TorrentResult } from './mockProvider.js';
 import { searchMockTorrents } from './mockProvider.js';
@@ -25,6 +25,7 @@ import {
   buildSearchUrl,
   buildTolokaDownloadUrl,
   debugSearchToloka,
+  getTolokaCookie,
   searchToloka,
   TolokaSearchError,
   type TolokaProviderDebug
@@ -431,17 +432,18 @@ export async function buildServer(options: { providerSearchers?: Partial<Provide
       };
     }
 
-    if (!config.tolokaCookie?.trim()) {
+    if (!isTolokaConfigured()) {
       reply.code(500);
       return {
         error: 'TOLOKA_COOKIE is not configured'
       };
     }
 
+    const tolokaCookie = await getTolokaCookie();
     const response = await fetch(buildTolokaDownloadUrl(params.id), {
       headers: {
         accept: 'application/x-bittorrent,application/octet-stream,*/*',
-        cookie: config.tolokaCookie,
+        cookie: tolokaCookie,
         'user-agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
       }

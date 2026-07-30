@@ -11,6 +11,7 @@ const TOLOKA_PROVIDER_NAME = 'Toloka';
 const BROWSER_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 const PROJECT_ROOT = fileURLToPath(new URL('../../../..', import.meta.url));
+let cachedCookie = config.tolokaCookie?.trim();
 
 export type TolokaProviderDebug = {
   searchUrl: string;
@@ -37,6 +38,59 @@ export class TolokaSearchError extends Error {
     super(message);
     this.name = 'TolokaSearchError';
   }
+}
+
+function mergeCookies(lines: string[]): string {
+  const cookies = new Map<string, string>();
+  for (const line of lines) {
+    const pair = line.split(';')[0];
+    const separator = pair.indexOf('=');
+    if (separator > 0) {
+      cookies.set(pair.slice(0, separator), pair.slice(separator + 1));
+    }
+  }
+  return [...cookies].map(([name, value]) => `${name}=${value}`).join('; ');
+}
+
+async function loginToloka(): Promise<string> {
+  if (!config.tolokaUsername?.trim() || !config.tolokaPassword?.trim()) {
+    throw new TolokaSearchError('Toloka session expired and credentials are not configured', {
+      searchUrl: buildSearchUrl(''),
+      parserStrategy: 'toloka.login.v1'
+    });
+  }
+
+  const response = await fetch(new URL('/login.php', config.tolokaBaseUrl), {
+    method: 'POST',
+    redirect: 'manual',
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+      'user-agent': BROWSER_USER_AGENT
+    },
+    body: new URLSearchParams({
+      username: config.tolokaUsername,
+      password: config.tolokaPassword,
+      autologin: 'on',
+      ssl: 'on',
+      redirect: 'tracker.php',
+      login: 'Вхід'
+    })
+  });
+  const cookie = mergeCookies(response.headers.getSetCookie?.() ?? []);
+  if (!cookie) {
+    throw new TolokaSearchError(`Toloka login failed with HTTP ${response.status}`, {
+      searchUrl: buildSearchUrl(''),
+      statusCode: response.status,
+      parserStrategy: 'toloka.login.v1'
+    });
+  }
+
+  cachedCookie = cookie;
+  return cookie;
+}
+
+export async function getTolokaCookie(): Promise<string> {
+  return cachedCookie || loginToloka();
 }
 
 export function buildSearchUrl(query: string): string {
@@ -66,7 +120,7 @@ async function saveDebugHtml(html: string): Promise<void> {
   await writeFile(filePath, html, 'utf8');
 }
 
-async function fetchTolokaSearchHtml(query: string): Promise<TolokaFetchResult> {
+async function fetchTolokaSearchHtml(query: string, retryLogin = true): Promise<TolokaFetchResult> {
   const searchUrl = buildSearchUrl(query);
 
   if (!isTolokaConfigured()) {
@@ -76,10 +130,11 @@ async function fetchTolokaSearchHtml(query: string): Promise<TolokaFetchResult> 
     });
   }
 
+  const cookie = cachedCookie || (await loginToloka());
   const response = await fetch(searchUrl, {
     headers: {
       accept: 'text/html,application/xhtml+xml',
-      cookie: config.tolokaCookie ?? '',
+      cookie,
       'user-agent': BROWSER_USER_AGENT
     }
   });
@@ -103,6 +158,11 @@ async function fetchTolokaSearchHtml(query: string): Promise<TolokaFetchResult> 
   }
 
   if (debug.looksLikeLoginPage) {
+    if (retryLogin && config.tolokaUsername && config.tolokaPassword) {
+      cachedCookie = undefined;
+      await loginToloka();
+      return fetchTolokaSearchHtml(query, false);
+    }
     throw new TolokaSearchError('Toloka returned a login page or cookie is not authenticated', debug);
   }
 

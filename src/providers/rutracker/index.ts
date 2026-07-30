@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import iconv from 'iconv-lite';
@@ -83,6 +83,12 @@ async function writeCachedSession(session: RutrackerSession): Promise<void> {
   );
 }
 
+async function clearRutrackerSession(): Promise<void> {
+  cachedSession = undefined;
+  sessionPromise = undefined;
+  await unlink(SESSION_CACHE_FILE).catch(() => undefined);
+}
+
 export class RutrackerSearchError extends Error {
   constructor(
     message: string,
@@ -125,7 +131,7 @@ async function saveDebugHtml(html: string): Promise<void> {
 }
 
 async function solveCloudflare(): Promise<RutrackerSession> {
-  if (!config.flaresolverrUrl || !config.rutrackerProxyUrl) {
+  if (!config.flaresolverrUrl || !config.flaresolverrProxyUrl) {
     return {
       cookie: '',
       userAgent: BROWSER_USER_AGENT
@@ -142,7 +148,7 @@ async function solveCloudflare(): Promise<RutrackerSession> {
       url: buildRutrackerSearchUrl(''),
       maxTimeout: 100_000,
       proxy: {
-        url: config.rutrackerProxyUrl
+        url: config.flaresolverrProxyUrl
       }
     })
   });
@@ -239,16 +245,27 @@ export async function fetchRutrackerAuthenticated(
     headers?: Record<string, string>;
   } = {}
 ) {
-  const session = await getRutrackerSession();
-  return fetch(url, {
-    ...init,
-    headers: {
-      ...init.headers,
-      cookie: session.cookie,
-      'user-agent': session.userAgent
-    },
-    ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {})
-  });
+  const request = async () => {
+    const session = await getRutrackerSession();
+    return fetch(url, {
+      ...init,
+      headers: {
+        ...init.headers,
+        cookie: session.cookie,
+        'user-agent': session.userAgent
+      },
+      ...(proxyDispatcher ? { dispatcher: proxyDispatcher } : {})
+    });
+  };
+
+  const response = await request();
+  if (response.status !== 403) {
+    return response;
+  }
+
+  await response.body?.cancel();
+  await clearRutrackerSession();
+  return request();
 }
 
 async function fetchRutrackerSearchHtml(query: string): Promise<RutrackerFetchResult> {
@@ -278,7 +295,7 @@ async function fetchRutrackerSearchHtml(query: string): Promise<RutrackerFetchRe
   }
 
   if (debug.looksLikeLoginPage) {
-    cachedSession = undefined;
+    await clearRutrackerSession();
     throw new RutrackerSearchError('RuTracker returned a login page or credentials are not authenticated', debug);
   }
 
