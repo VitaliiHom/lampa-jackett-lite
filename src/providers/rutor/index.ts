@@ -112,7 +112,6 @@ function normalizeResults(html: string): TorrentResult[] {
     downloadId: result.downloadId,
     originalDownloadUrl: result.downloadUrl,
     proxiedDownloadUrl: result.downloadId ? buildProxiedDownloadUrl(result.downloadId) : undefined,
-    magnetUrl: result.magnetUrl,
     pubDate: result.publishedAt,
     size: result.size,
     seeders: result.seeders,
